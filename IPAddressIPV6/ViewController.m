@@ -17,6 +17,9 @@
 #define IP_ADDR_IPv4    @"ipv4"
 #define IP_ADDR_IPv6    @"ipv6"
 
+#import <netdb.h>
+#import <arpa/inet.h>
+
 @interface ViewController ()
 
 @end
@@ -27,7 +30,16 @@
     [super viewDidLoad];
     // Do any additional setup after loading the view.
     
-    NSLog(@"IP %@", [self getIPAddress]);
+}
+
+-(void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    
+    NSLog(@"getIPAddress %@", [self getIPAddress]);
+    NSLog(@"getIPAddressForHost %@", [ViewController getIPAddressForHost:@"www.google.com"]);
+    NSLog(@"resolveHostForURL %@", [self resolveHost:@"www.google.com"]);
+    
+    
 }
 
 - (NSString *)getIPAddress {
@@ -47,18 +59,17 @@
 - (NSString *)getIPAddress:(BOOL)preferIPv4
 {
     NSArray *searchArray = preferIPv4 ?
-    @[ /*IOS_VPN @"/" IP_ADDR_IPv4, IOS_VPN @"/" IP_ADDR_IPv6,*/ IOS_WIFI @"/" IP_ADDR_IPv4, IOS_WIFI @"/" IP_ADDR_IPv6, IOS_CELLULAR @"/" IP_ADDR_IPv4, IOS_CELLULAR @"/" IP_ADDR_IPv6 ] :
-    @[ /*IOS_VPN @"/" IP_ADDR_IPv6, IOS_VPN @"/" IP_ADDR_IPv4,*/ IOS_WIFI @"/" IP_ADDR_IPv6, IOS_WIFI @"/" IP_ADDR_IPv4, IOS_CELLULAR @"/" IP_ADDR_IPv6, IOS_CELLULAR @"/" IP_ADDR_IPv4 ] ;
+    @[IOS_WIFI @"/" IP_ADDR_IPv4, IOS_WIFI @"/" IP_ADDR_IPv6, IOS_CELLULAR @"/" IP_ADDR_IPv4, IOS_CELLULAR @"/" IP_ADDR_IPv6 ] :
+    @[IOS_WIFI @"/" IP_ADDR_IPv6, IOS_WIFI @"/" IP_ADDR_IPv4, IOS_CELLULAR @"/" IP_ADDR_IPv6, IOS_CELLULAR @"/" IP_ADDR_IPv4 ] ;
     
     NSDictionary *addresses = [self getIPAddresses];
-    NSLog(@"addresses: %@", addresses);
     
     __block NSString *address;
     [searchArray enumerateObjectsUsingBlock:^(NSString *key, NSUInteger idx, BOOL *stop)
      {
-         address = addresses[key];
-         if(address) *stop = YES;
-     } ];
+        address = addresses[key];
+        if(address) *stop = YES;
+    } ];
     return address ? address : @"0.0.0.0";
 }
 
@@ -102,5 +113,72 @@
     }
     return [addresses count] ? addresses : nil;
 }
+
+
++ (NSString*) getIPAddressForHost: (NSString*) theHost {
+    if(theHost == nil) { return nil; }
+    struct hostent *host = gethostbyname([theHost UTF8String]);
+    if (host == NULL) {
+        herror("resolv");
+        return NULL;
+    }
+    struct in_addr **list = (struct in_addr **)host->h_addr_list;
+    NSString *addressString = [NSString stringWithCString:inet_ntoa(*list[0]) encoding: NSUTF8StringEncoding];
+    return addressString;
+}
+
+- (NSString*)resolveHost:(NSString *)hostname {
+    Boolean result = false;
+    CFHostRef hostRef;
+    CFArrayRef addresses;
+    NSString *ipAddress = nil;
+    hostRef = CFHostCreateWithName(kCFAllocatorDefault, (__bridge
+                                                         CFStringRef)hostname);
+    CFStreamError *error = NULL;
+    if (hostRef) {
+        result = CFHostStartInfoResolution(hostRef, kCFHostAddresses, error);
+        if (result) {
+            addresses = CFHostGetAddressing(hostRef, &result);
+        }
+    }
+    if (result) {
+        CFIndex index = 0;
+        CFDataRef ref = (CFDataRef) CFArrayGetValueAtIndex(addresses, index);
+        
+        int port=0;
+        struct sockaddr *addressGeneric;
+        
+        NSData *myData = (__bridge NSData *)ref;
+        addressGeneric = (struct sockaddr *)[myData bytes];
+        
+        switch (addressGeneric->sa_family) {
+            case AF_INET: {
+                struct sockaddr_in *ip4;
+                char dest[INET_ADDRSTRLEN];
+                ip4 = (struct sockaddr_in *)[myData bytes];
+                port = ntohs(ip4->sin_port);
+                ipAddress = [NSString stringWithFormat:@"%s", inet_ntop(AF_INET, &ip4->sin_addr, dest, sizeof dest)];
+            }
+                break;
+                
+            case AF_INET6: {
+                struct sockaddr_in6 *ip6;
+                char dest[INET6_ADDRSTRLEN];
+                ip6 = (struct sockaddr_in6 *)[myData bytes];
+                port = ntohs(ip6->sin6_port);
+                ipAddress = [NSString stringWithFormat:@"%s", inet_ntop(AF_INET6, &ip6->sin6_addr, dest, sizeof dest)];
+            }
+                break;
+            default:
+                ipAddress = nil;
+                break;
+        }
+    }
+    
+    return ipAddress;
+}
+
+
+
 
 @end
